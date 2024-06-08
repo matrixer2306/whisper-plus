@@ -1,6 +1,6 @@
 <div align="center">
 <h2>
-    WhisperPlus: Advancing Speech2Text and Text2Speech Feature 🚀
+    WhisperPlus: Faster, Smarter, and More Capable 🚀
 </h2>
 <div>
     <img width="500" alt="teaser" src="doc\openai-whisper.jpg">
@@ -17,7 +17,8 @@
 ## 🛠️ Installation
 
 ```bash
-pip install whisperplus
+pip install whisperplus git+https://github.com/huggingface/transformers
+pip install flash-attn --no-build-isolation
 ```
 
 ## 🤗 Model Hub
@@ -31,21 +32,80 @@ To use the whisperplus library, follow the steps below for different tasks:
 ### 🎵 Youtube URL to Audio
 
 ```python
-from whisperplus import SpeechToTextPipeline, download_and_convert_to_mp3
+from whisperplus import SpeechToTextPipeline, download_youtube_to_mp3
+from transformers import BitsAndBytesConfig, HqqConfig
+import torch
 
 url = "https://www.youtube.com/watch?v=di3rHkEZuUw"
+audio_path = download_youtube_to_mp3(url, output_dir="downloads", filename="test")
 
-audio_path = download_and_convert_to_mp3(url)
-pipeline = SpeechToTextPipeline(model_id="openai/whisper-large-v3")
-transcript = pipeline(audio_path, "openai/whisper-large-v3", "english")
+hqq_config = HqqConfig(
+    nbits=4,
+    group_size=64,
+    quant_zero=False,
+    quant_scale=False,
+    axis=0,
+    offload_meta=False,
+)  # axis=0 is used by default
+
+bnb_config = BitsAndBytesConfig(
+    load_in_4bit=True,
+    bnb_4bit_quant_type="nf4",
+    bnb_4bit_compute_dtype=torch.bfloat16,
+    bnb_4bit_use_double_quant=True,
+)
+
+pipeline = SpeechToTextPipeline(
+    model_id="distil-whisper/distil-large-v3",
+    quant_config=hqq_config,
+    flash_attention_2=True,
+)
+
+transcript = pipeline(
+    audio_path=audio_path,
+    chunk_length_s=30,
+    stride_length_s=5,
+    max_new_tokens=128,
+    batch_size=100,
+    language="english",
+    return_timestamps=False,
+)
 
 print(transcript)
+```
+
+### 🍎 Apple MLX
+
+```python
+from whisperplus.pipelines import mlx_whisper
+from whisperplus import download_youtube_to_mp3
+
+url = "https://www.youtube.com/watch?v=1__CAdTJ5JU"
+audio_path = download_youtube_to_mp3(url)
+
+text = mlx_whisper.transcribe(
+    audio_path, path_or_hf_repo="mlx-community/whisper-large-v3-mlx"
+)["text"]
+print(text)
+```
+
+### 🍏 Lightning Mlx Whisper
+
+```python
+from whisperplus.pipelines.lightning_whisper_mlx import LightningWhisperMLX
+from whisperplus import download_youtube_to_mp3
+
+url = "https://www.youtube.com/watch?v=1__CAdTJ5JU"
+audio_path = download_youtube_to_mp3(url)
+
+whisper = LightningWhisperMLX(model="distil-large-v3", batch_size=12, quant=None)
+output = whisper.transcribe(audio_path=audio_path)["text"]
 ```
 
 ### 📰 Summarization
 
 ```python
-from whisperplus import TextSummarizationPipeline
+from whisperplus.pipelines.summarization import TextSummarizationPipeline
 
 summarizer = TextSummarizationPipeline(model_id="facebook/bart-large-cnn")
 summary = summarizer.summarize(transcript)
@@ -55,7 +115,7 @@ print(summary[0]["summary_text"])
 ### 📰 Long Text Support Summarization
 
 ```python
-from whisperplus import LongTextSummarizationPipeline
+from whisperplus.pipelines.long_text_summarization import LongTextSummarizationPipeline
 
 summarizer = LongTextSummarizationPipeline(model_id="facebook/bart-large-cnn")
 summary_text = summarizer.summarize(transcript)
@@ -64,19 +124,27 @@ print(summary_text)
 
 ### 💬 Speaker Diarization
 
-```python
-from whisperplus import (
-    ASRDiarizationPipeline,
-    download_and_convert_to_mp3,
-    format_speech_to_dialogue,
-)
+You must confirm the licensing permissions of these two models.
 
-audio_path = download_and_convert_to_mp3("https://www.youtube.com/watch?v=mRB14sFHw2E")
+- https://huggingface.co/pyannote/speaker-diarization-3.1
+- https://huggingface.co/pyannote/segmentation-3.0
+
+```bash
+pip install -r speaker_diarization.txt
+pip install -U "huggingface_hub[cli]"
+huggingface-cli login
+```
+
+```python
+from whisperplus.pipelines.whisper_diarize import ASRDiarizationPipeline
+from whisperplus import download_youtube_to_mp3, format_speech_to_dialogue
+
+audio_path = download_youtube_to_mp3("https://www.youtube.com/watch?v=mRB14sFHw2E")
 
 device = "cuda"  # cpu or mps
 pipeline = ASRDiarizationPipeline.from_pretrained(
     asr_model="openai/whisper-large-v3",
-    diarizer_model="pyannote/speaker-diarization",
+    diarizer_model="pyannote/speaker-diarization-3.1",
     use_auth_token=False,
     chunk_length_s=30,
     device=device,
@@ -88,6 +156,10 @@ print(dialogue)
 ```
 
 ### ⭐ RAG - Chat with Video(LanceDB)
+
+```bash
+pip install sentence-transformers ctransformers langchain
+```
 
 ```python
 from whisperplus.pipelines.chatbot import ChatWithVideo
@@ -107,8 +179,12 @@ print(response)
 
 ### 🌠 RAG - Chat with Video(AutoLLM)
 
+```bash
+pip install autollm>=0.1.9
+```
+
 ```python
-from whisperplus import AutoLLMChatWithVideo
+from whisperplus.pipelines.autollm_chatbot import AutoLLMChatWithVideo
 
 # service_context_params
 system_prompt = """
@@ -144,10 +220,10 @@ response = chat.run_query(query)
 print(response)
 ```
 
-### 🎙️ Speech to Text
+### 🎙️ Text to Speech
 
 ```python
-from whisperplus import TextToSpeechPipeline
+from whisperplus.pipelines.text2speech import TextToSpeechPipeline
 
 tts = TextToSpeechPipeline(model_id="suno/bark")
 audio = tts(text="Hello World", voice_preset="v2/en_speaker_6")
@@ -155,17 +231,30 @@ audio = tts(text="Hello World", voice_preset="v2/en_speaker_6")
 
 ### 🎥 AutoCaption
 
+```bash
+pip install moviepy
+apt install imagemagick libmagick++-dev
+cat /etc/ImageMagick-6/policy.xml | sed 's/none/read,write/g'> /etc/ImageMagick-6/policy.xml
+```
+
 ```python
-from whisperplus import WhisperAutoCaptionPipeline
+from whisperplus.pipelines.whisper_autocaption import WhisperAutoCaptionPipeline
+from whisperplus import download_youtube_to_mp4
+
+video_path = download_youtube_to_mp4(
+    "https://www.youtube.com/watch?v=di3rHkEZuUw",
+    output_dir="downloads",
+    filename="test",
+)  # Optional
 
 caption = WhisperAutoCaptionPipeline(model_id="openai/whisper-large-v3")
-caption(video_path="test.mp4", output_path="output.mp4", language="turkish")
+caption(video_path=video_path, output_path="output.mp4", language="english")
 ```
 
 ## 😍 Contributing
 
 ```bash
-pip install -r dev-requirements.txt
+pip install pre-commit
 pre-commit install
 pre-commit run --all-files
 ```
